@@ -29,23 +29,11 @@ class MediaStorage:
         self.bucket = os.getenv("MINIO_BUCKET", "matrix-media")
         self._ensure_bucket()
         
-        # Public-facing MinIO client for generating presigned URLs accessible
-        # by external users.  Falls back to the internal client when not set.
-        public_url = os.getenv("MINIO_PUBLIC_URL")  # e.g. "https://minio.weepingdogel.vip"
-        if public_url:
-            # Parse the public URL to extract host and TLS setting
-            from urllib.parse import urlparse
-            parsed = urlparse(public_url)
-            public_endpoint = parsed.netloc or parsed.path
-            public_secure = parsed.scheme == "https"
-            self.public_client = Minio(
-                public_endpoint,
-                access_key=access_key,
-                secret_key=secret_key,
-                secure=public_secure,
-            )
-        else:
-            self.public_client = self.client
+        # Public base URL for rewriting presigned URLs so they are reachable
+        # by external users.  When unset, presigned URLs use the internal endpoint.
+        self._public_url = os.getenv("MINIO_PUBLIC_URL")  # e.g. "https://api-minio.weepingdogel.vip"
+        # Internal origin used for string replacement in presigned URLs
+        self._internal_origin = f"http://{endpoint}"
     
     def _ensure_bucket(self):
         """Ensure the bucket exists, create if it doesn't"""
@@ -118,8 +106,10 @@ class MediaStorage:
         """
         Get a presigned URL for downloading the file.
         
-        Uses the public MinIO endpoint (MINIO_PUBLIC_URL) when available so
-        that the returned URL is reachable by external users.
+        Uses the internal MinIO client to generate the presigned URL, then
+        rewrites the origin to MINIO_PUBLIC_URL so the link is reachable
+        by external users.  This avoids a second MinIO client that would
+        need to reach the bucket via the public network.
         
         Args:
             key: The MinIO object key
@@ -129,11 +119,14 @@ class MediaStorage:
             Presigned URL
         """
         try:
-            url = self.public_client.presigned_get_object(
+            url = self.client.presigned_get_object(
                 self.bucket,
                 key,
                 expires=timedelta(seconds=expires)
             )
+            # Rewrite internal origin to public URL
+            if self._public_url:
+                url = url.replace(self._internal_origin, self._public_url, 1)
             logger.debug(f"Generated presigned URL for {key}")
             return url
         except S3Error as e:
