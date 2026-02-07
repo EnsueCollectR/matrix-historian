@@ -28,6 +28,24 @@ class MediaStorage:
         )
         self.bucket = os.getenv("MINIO_BUCKET", "matrix-media")
         self._ensure_bucket()
+        
+        # Public-facing MinIO client for generating presigned URLs accessible
+        # by external users.  Falls back to the internal client when not set.
+        public_url = os.getenv("MINIO_PUBLIC_URL")  # e.g. "https://minio.weepingdogel.vip"
+        if public_url:
+            # Parse the public URL to extract host and TLS setting
+            from urllib.parse import urlparse
+            parsed = urlparse(public_url)
+            public_endpoint = parsed.netloc or parsed.path
+            public_secure = parsed.scheme == "https"
+            self.public_client = Minio(
+                public_endpoint,
+                access_key=access_key,
+                secret_key=secret_key,
+                secure=public_secure,
+            )
+        else:
+            self.public_client = self.client
     
     def _ensure_bucket(self):
         """Ensure the bucket exists, create if it doesn't"""
@@ -98,7 +116,10 @@ class MediaStorage:
     
     def get_url(self, key: str, expires: int = 3600) -> str:
         """
-        Get a presigned URL for downloading the file
+        Get a presigned URL for downloading the file.
+        
+        Uses the public MinIO endpoint (MINIO_PUBLIC_URL) when available so
+        that the returned URL is reachable by external users.
         
         Args:
             key: The MinIO object key
@@ -108,7 +129,7 @@ class MediaStorage:
             Presigned URL
         """
         try:
-            url = self.client.presigned_get_object(
+            url = self.public_client.presigned_get_object(
                 self.bucket,
                 key,
                 expires=timedelta(seconds=expires)
