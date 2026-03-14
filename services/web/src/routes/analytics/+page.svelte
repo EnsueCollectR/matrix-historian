@@ -2,17 +2,31 @@
 	import Chart from '$lib/Chart.svelte';
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n';
+	import { formatTime } from '$lib/timezone';
 
 	let { data } = $props();
 
-	// Message trend chart data (14-day stats) — API returns {date, count} objects
-	let trendLabels = $derived(data.messageStats.map((s) => {
-		const raw = s.date ?? s[0] ?? '';
+	/**
+	 * Normalize bare ISO timestamps from the API by appending 'Z' if missing,
+	 * so JS Date() correctly treats them as UTC.
+	 */
+	function normalizeTs(raw) {
+		const s = String(raw);
+		if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s) && !/[Zz]|[+-]\d{2}/.test(s)) {
+			return s + 'Z';
+		}
+		return s;
+	}
+
+	function formatDateLabel(raw) {
 		try {
-			const d = new Date(raw);
+			const d = new Date(normalizeTs(raw));
 			return isNaN(d) ? String(raw) : `${d.getMonth() + 1}/${d.getDate()}`;
 		} catch { return String(raw); }
-	}));
+	}
+
+	// Message trend chart data (14-day stats) — API returns {date, count} objects
+	let trendLabels = $derived(data.messageStats.map((s) => formatDateLabel(s.date ?? s[0] ?? '')));
 	let trendCounts = $derived(data.messageStats.map((s) => s.count ?? s[1] ?? 0));
 
 	// User activity chart data
@@ -28,13 +42,7 @@
 	let hourlyCounts = $derived((data.hourlyActivity ?? []).map((h) => h.count ?? h[1] ?? 0));
 
 	// Trends with interval
-	let trendsLabels = $derived(data.trends.map((t) => {
-		const raw = t.period ?? t.date ?? t[0] ?? '';
-		try {
-			const d = new Date(raw);
-			return isNaN(d) ? String(raw) : `${d.getMonth() + 1}/${d.getDate()}`;
-		} catch { return String(raw); }
-	}));
+	let trendsLabels = $derived(data.trends.map((t) => formatDateLabel(t.period ?? t.date ?? t[0] ?? '')));
 	let trendsTotals = $derived(data.trends.map((t) => t.count ?? t.total ?? t[1] ?? 0));
 
 	// Word cloud
@@ -313,7 +321,7 @@
 								<tr>
 									<td class="text-xs">{row.room_id ?? ''}</td>
 									<td class="text-xs">{row.sender_id ?? ''}</td>
-									<td class="text-xs opacity-60">{row.timestamp ?? ''}</td>
+									<td class="text-xs opacity-60">{row.timestamp ? $formatTime(row.timestamp) : ''}</td>
 								</tr>
 							{/each}
 						</tbody>
